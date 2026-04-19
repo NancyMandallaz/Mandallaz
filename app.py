@@ -75,14 +75,29 @@ COEFF_CHARGES = 1.45   # Coefficient charges patronales (taux horaire brut → c
 
 @st.cache_data(show_spinner=False)
 def download_from_drive(file_id: str) -> bytes:
-    """Télécharge un fichier depuis Google Drive via gdown."""
-    import gdown, tempfile
-    url = f"https://drive.google.com/uc?id={file_id}"
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        tmp_path = tmp.name
-    gdown.download(url, tmp_path, quiet=True, fuzzy=True)
-    with open(tmp_path, 'rb') as f:
-        return f.read()
+    """Télécharge un fichier Excel depuis Google Drive en mémoire."""
+    session = requests.Session()
+    # Première requête
+    url = "https://drive.google.com/uc"
+    params = {"id": file_id, "export": "download"}
+    response = session.get(url, params=params, stream=True)
+    # Récupération du token de confirmation si fichier volumineux
+    token = None
+    for key, value in response.cookies.items():
+        if key.startswith("download_warning"):
+            token = value
+    if token:
+        params["confirm"] = token
+        response = session.get(url, params=params, stream=True)
+    # Lecture complète du contenu
+    content = b"".join(response.iter_content(chunk_size=32768))
+    # Vérification signature XLSX (fichier ZIP)
+    if content[:2] != b"PK":
+        raise ValueError(
+            f"Le fichier Google Drive ({file_id}) n'est pas un Excel valide. "
+            "Vérifiez que le partage est bien en mode 'Toute personne ayant le lien'."
+        )
+    return content
 
 
 @st.cache_data(show_spinner=False)
