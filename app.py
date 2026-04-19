@@ -76,16 +76,28 @@ COEFF_CHARGES = 1.45   # Coefficient charges patronales (taux horaire brut → c
 @st.cache_data(show_spinner=False)
 def download_from_drive(file_id: str) -> bytes:
     """Télécharge un fichier depuis Google Drive via son ID et retourne les bytes."""
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    # URL de téléchargement direct
+    url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
     session = requests.Session()
-    response = session.get(url, stream=True)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = session.get(url, headers=headers, stream=True)
     # Gestion du warning "fichier volumineux" de Google Drive
     for key, value in response.cookies.items():
         if key.startswith('download_warning'):
-            response = session.get(url, params={'confirm': value}, stream=True)
+            response = session.get(url, params={'confirm': value},
+                                   headers=headers, stream=True)
             break
     response.raise_for_status()
-    return response.content
+    content = response.content
+    # Vérification que c'est bien un fichier Excel (signature ZIP/XLSX)
+    if not content[:4] in [b'PK\x03\x04', b'PK']:
+        # Google a renvoyé une page HTML au lieu du fichier
+        # Essai avec l'URL d'export alternatif
+        url2 = f"https://drive.google.com/uc?id={file_id}&export=download&confirm=t&uuid=1"
+        response2 = session.get(url2, headers=headers)
+        response2.raise_for_status()
+        content = response2.content
+    return content
 
 
 @st.cache_data(show_spinner=False)
