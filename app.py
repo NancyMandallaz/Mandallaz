@@ -17,6 +17,43 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
+#  MOT DE PASSE
+# ─────────────────────────────────────────────
+def check_password() -> bool:
+    """Affiche un écran de connexion et vérifie le mot de passe."""
+    # En dev local sans secrets, on passe directement
+    try:
+        mdp_correct = st.secrets["APP_PASSWORD"]
+    except (KeyError, FileNotFoundError):
+        return True
+
+    if st.session_state.get('authenticated'):
+        return True
+
+    st.markdown("""
+    <div style="max-width:400px; margin:80px auto; text-align:center;">
+      <h1 style="font-family:'DM Serif Display',serif; color:#1a1a2e; font-size:2rem;">
+        🏅 La Mandallaz
+      </h1>
+      <p style="color:#666; margin-bottom:32px;">Simulateur de salaires — accès restreint</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        mdp_saisi = st.text_input("Mot de passe", type="password", key="mdp_input")
+        if st.button("Se connecter", use_container_width=True):
+            if mdp_saisi == mdp_correct:
+                st.session_state['authenticated'] = True
+                st.rerun()
+            else:
+                st.error("Mot de passe incorrect.")
+    return False
+
+if not check_password():
+    st.stop()
+
+# ─────────────────────────────────────────────
 #  STYLE
 # ─────────────────────────────────────────────
 st.markdown("""
@@ -397,6 +434,8 @@ with st.sidebar:
             st.session_state['journal'] = []
             st.session_state['global_hausse_type'] = 'Pourcentage (%)'
             st.session_state['global_hausse_val']  = 0.0
+            st.session_state['global_tarif_type']  = 'Pourcentage (%)'
+            st.session_state['global_tarif_val']   = 0.0
             st.rerun()
 
 
@@ -801,6 +840,8 @@ with tab_sim:
             st.session_state['journal'] = []
             st.session_state['global_hausse_type'] = 'Pourcentage (%)'
             st.session_state['global_hausse_val']  = 0.0
+            st.session_state['global_tarif_type']  = 'Pourcentage (%)'
+            st.session_state['global_tarif_val']   = 0.0
             st.rerun()
 
     # ── Initialisation session state simulation ──
@@ -810,6 +851,10 @@ with tab_sim:
         st.session_state['global_hausse_type'] = 'Pourcentage (%)'
     if 'global_hausse_val' not in st.session_state:
         st.session_state['global_hausse_val'] = 0.0
+    if 'global_tarif_type' not in st.session_state:
+        st.session_state['global_tarif_type'] = 'Pourcentage (%)'
+    if 'global_tarif_val' not in st.session_state:
+        st.session_state['global_tarif_val'] = 0.0
 
     def appliquer_simulation():
         """Recalcule sim_salaries depuis la base en appliquant :
@@ -840,8 +885,18 @@ with tab_sim:
         df['Volume annuel'] = df['Durée hebdo'] * df['nb semaines']
         st.session_state['sim_salaries'] = df
 
-        # Modifications individuelles activités
+        # Augmentation globale des tarifs d'activités
         df_act = st.session_state['activites_df'].copy()
+        df_act['Tarif'] = df_act['Tarif'].astype(float)
+        ttype = st.session_state['global_tarif_type']
+        tval  = st.session_state['global_tarif_val']
+        if tval != 0:
+            if ttype == 'Pourcentage (%)':
+                df_act['Tarif'] *= (1 + tval / 100)
+            else:
+                df_act['Tarif'] += tval
+
+        # Modifications individuelles activités
         for entry in st.session_state['journal']:
             if entry['type'] == 'activité':
                 idx = df_act[df_act['Code'] == entry['code']].index[0]
@@ -1058,6 +1113,54 @@ with tab_sim:
         st.session_state['journal'] = journal
         appliquer_simulation()
         st.rerun()
+
+    # ── Section D : Augmentation globale des tarifs ──
+    st.markdown('<div class="section-header">D &middot; Ajustement global des tarifs activités</div>',
+                unsafe_allow_html=True)
+
+    col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
+    with col_d1:
+        tarif_type = st.radio(
+            "Type d'ajustement",
+            ["Pourcentage (%)", "Montant fixe (€)"],
+            index=0 if st.session_state['global_tarif_type'] == 'Pourcentage (%)' else 1,
+            horizontal=True, key='tarif_type'
+        )
+    with col_d2:
+        if tarif_type == "Pourcentage (%)":
+            tarif_val = st.number_input(
+                "Ajustement (%)",
+                min_value=-50.0, max_value=100.0, step=0.5,
+                value=st.session_state['global_tarif_val'] if st.session_state['global_tarif_type'] == 'Pourcentage (%)' else 0.0,
+                key='tarif_pct',
+                help="Appliqué sur les tarifs de base originaux de toutes les activités"
+            )
+        else:
+            tarif_val = st.number_input(
+                "Ajustement (€)",
+                min_value=-200.0, max_value=500.0, step=5.0,
+                value=st.session_state['global_tarif_val'] if st.session_state['global_tarif_type'] == 'Montant fixe (€)' else 0.0,
+                key='tarif_eur',
+                help="Appliqué sur les tarifs de base originaux de toutes les activités"
+            )
+    with col_d3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        apply_tarif = st.button("▶ Appliquer", key='btn_tarif_global', use_container_width=True)
+
+    if apply_tarif:
+        st.session_state['global_tarif_type'] = tarif_type
+        st.session_state['global_tarif_val']  = tarif_val
+        appliquer_simulation()
+        st.rerun()
+
+    tv = st.session_state['global_tarif_val']
+    tt = st.session_state['global_tarif_type']
+    if tv != 0:
+        unite = "%" if tt == "Pourcentage (%)" else "€"
+        signe = "+" if tv > 0 else ""
+        st.info(f"📌 Ajustement global des tarifs actif : **{signe}{tv} {unite}** sur tous les tarifs de base")
+    else:
+        st.caption("Aucun ajustement global des tarifs actif.")
 
     # ── Journal des modifications ──
     st.markdown('<div class="section-header">📋 Journal des modifications individuelles</div>',
